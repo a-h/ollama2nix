@@ -1,9 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -114,8 +118,9 @@ func run() (err error) {
 	}
 	defer resp.Body.Close()
 
+	manifestHash := sha256.New()
 	var manifest Manifest
-	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+	if err := json.NewDecoder(io.TeeReader(resp.Body, manifestHash)).Decode(&manifest); err != nil {
 		return fmt.Errorf("failed to decode manifest: %w", err)
 	}
 
@@ -131,15 +136,22 @@ func run() (err error) {
 			Path:   fmt.Sprintf("/v2/library/mistral-nemo/blobs/%s", url.PathEscape(layer.Digest)),
 		}
 		sb.WriteString(fmt.Sprintf("  blob_%d = pkgs.fetchurl {\n", i))
+		sb.WriteString(fmt.Sprintf("    curlOptsList = [\"-L\" \"-H\" \"Accept:application/octet-stream\"];\n"))
 		sb.WriteString(fmt.Sprintf("    url = %q;\n", blobURL.String()))
-		sb.WriteString(fmt.Sprintf("    hash = %q;\n", layer.Digest))
+		blobNixHash, err := convertOllamaHashToNixHash(layer.Digest)
+		if err != nil {
+			return fmt.Errorf("failed to convert blob hash: %w", err)
+		}
+		sb.WriteString(fmt.Sprintf("    hash = %q;\n", blobNixHash))
 		sb.WriteString("  };\n")
 	}
 	sb.WriteString("\n")
 	sb.WriteString("  # Fetch the manifest file.\n")
 	sb.WriteString("  manifestFile = pkgs.fetchurl {\n")
+	sb.WriteString(fmt.Sprintf("    curlOptsList = [\"-L\" \"-H\" \"Accept:application/octet-stream\"];\n"))
 	sb.WriteString(fmt.Sprintf("    url = %q;\n", manifestURL.String()))
-	sb.WriteString(fmt.Sprintf("    hash = %q;\n", manifest.Config.Digest))
+	base64Hash := base64.StdEncoding.EncodeToString(manifestHash.Sum(nil))
+	sb.WriteString(fmt.Sprintf("    hash = %q;\n", "sha256-"+base64Hash))
 	sb.WriteString("  };\n")
 	sb.WriteString("in\n")
 	sb.WriteString("  # Use symlinkJoin to create the final symlinked structure.\n")
@@ -169,6 +181,20 @@ func run() (err error) {
 	sb.WriteString("  }\n")
 	fmt.Println(sb.String())
 	return nil
+}
+
+func convertOllamaHashToNixHash(hexHash string) (nixHash string, err error) {
+	// Remove the "sha256:" prefix
+	hexHash = strings.TrimPrefix(hexHash, "sha256:")
+	// Decode the hex string into bytes
+	hashBytes, err := hex.DecodeString(hexHash)
+	if err != nil {
+		return "", err
+	}
+	// Encode the bytes into base64
+	base64Hash := base64.StdEncoding.EncodeToString(hashBytes)
+	// Return the Nix formatted hash
+	return "sha256-" + base64Hash, nil
 }
 
 // Nix template.
