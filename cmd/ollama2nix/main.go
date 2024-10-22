@@ -124,12 +124,14 @@ func run() (err error) {
 		return fmt.Errorf("failed to decode manifest: %w", err)
 	}
 
+	allLayers := append(manifest.Layers, manifest.Config)
+
 	var sb strings.Builder
 	sb.WriteString("{ pkgs ? import <nixpkgs> {} }:\n")
 	sb.WriteString("\n")
 	sb.WriteString("let\n")
 	sb.WriteString("  # List of blob files with URLs and corresponding hashes.\n")
-	for i, layer := range manifest.Layers {
+	for i, layer := range allLayers {
 		blobURL := url.URL{
 			Scheme: "https",
 			Host:   *flagRegistry,
@@ -165,8 +167,8 @@ func run() (err error) {
 	sb.WriteString("    postBuild = ''\n")
 	sb.WriteString("      # Move blob files to the blobs directory.\n")
 	sb.WriteString("      mkdir -p $out/blobs\n")
-	for i := 0; i < len(manifest.Layers); i++ {
-		sb.WriteString(fmt.Sprintf("      ln -s ${blob_%d} $out/blobs/%s\n", i, strings.Replace(manifest.Layers[i].Digest, ":", "-", -1)))
+	for i, l := range allLayers {
+		sb.WriteString(fmt.Sprintf("      ln -s ${blob_%d} $out/blobs/%s\n", i, strings.Replace(l.Digest, ":", "-", -1)))
 	}
 	sb.WriteString("\n")
 	// /manifests/registry.ollama.ai/library/mistral-nemo/latest
