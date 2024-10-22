@@ -99,16 +99,16 @@ func run() (err error) {
 	if *flagModel == "" {
 		return fmt.Errorf("model is required")
 	}
-	modelVersion := strings.SplitN(*flagModel, ":", 2)
-	model := modelVersion[0]
-	version := "latest"
-	if len(modelVersion) > 1 {
-		version = modelVersion[1]
+	modelTag := strings.SplitN(*flagModel, ":", 2)
+	model := modelTag[0]
+	tag := "latest"
+	if len(modelTag) > 1 {
+		tag = modelTag[1]
 	}
 	manifestURL := url.URL{
 		Scheme: "https",
 		Host:   *flagRegistry,
-		Path:   fmt.Sprintf("/v2/library/%s/manifests/%s", url.PathEscape(model), url.PathEscape(version)),
+		Path:   fmt.Sprintf("/v2/library/%s/manifests/%s", url.PathEscape(model), url.PathEscape(tag)),
 	}
 	log.Debug("Downloading manifest", slog.String("url", manifestURL.String()))
 
@@ -159,24 +159,20 @@ func run() (err error) {
 	sb.WriteString("    name = \"models\";\n")
 	sb.WriteString("\n")
 	sb.WriteString("    # Paths from both blobs and the manifest file.\n")
-	sb.WriteString("    paths = [\n")
-	for i := 0; i < len(manifest.Layers); i++ {
-		sb.WriteString(fmt.Sprintf("      blob_%d\n", i))
-	}
-	sb.WriteString(fmt.Sprintf("      manifestFile\n"))
-	sb.WriteString("    ];\n")
+	sb.WriteString("    paths = [ ];\n")
 	sb.WriteString("\n")
 	sb.WriteString("    # Add a postBuild step to arrange the structure.\n")
 	sb.WriteString("    postBuild = ''\n")
 	sb.WriteString("      # Move blob files to the blobs directory.\n")
 	sb.WriteString("      mkdir -p $out/blobs\n")
 	for i := 0; i < len(manifest.Layers); i++ {
-		sb.WriteString(fmt.Sprintf("      ln -s ${blob_%d} $out/blobs/\n", i))
+		sb.WriteString(fmt.Sprintf("      ln -s ${blob_%d} $out/blobs/%s\n", i, strings.Replace(manifest.Layers[i].Digest, ":", "-", -1)))
 	}
 	sb.WriteString("\n")
+	// /manifests/registry.ollama.ai/library/mistral-nemo/latest
 	sb.WriteString("      # Move manifest file to the appropriate directory.\n")
-	sb.WriteString(fmt.Sprintf("      mkdir -p $out/manifests/%s/%s\n", *flagRegistry, model))
-	sb.WriteString(fmt.Sprintf("      ln -s ${manifestFile} $out/manifests/%s/%s/%s\n", *flagRegistry, model, version))
+	sb.WriteString(fmt.Sprintf("      mkdir -p $out/manifests/%s/library/%s\n", *flagRegistry, model))
+	sb.WriteString(fmt.Sprintf("      ln -s ${manifestFile} $out/manifests/%s/library/%s/%s\n", *flagRegistry, model, tag))
 	sb.WriteString("    '';\n")
 	sb.WriteString("  }\n")
 	fmt.Println(sb.String())
